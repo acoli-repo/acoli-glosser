@@ -4,7 +4,9 @@ import java.util.*;
 public class Glosser {
 
 	public static void main(String argv[]) throws Exception {
-		System.err.println("synopsis: Glosser [-h] DICT1[..n]");
+		System.err.println("synopsis: Glosser [-h] DICT1[..n]\n"+
+		"DEPRECATION NOTE: This program has been ported to Python and is no longer maintained\n"+
+		"Please use glosser.py, instead");
 		if(argv[0].toLowerCase().startsWith("-h"))
 			System.err.println(
 				"\tDICTi TSV dictionary: FORM<TAB>GLOSS[<TAB>FREQ[<TAB>...]]\n"+

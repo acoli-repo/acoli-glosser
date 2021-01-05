@@ -15,7 +15,7 @@ For those cases, the most probable analysis will be returned (most frequent know
 
 Sample call:
 
-> cat MY-INPUT.conll | java Glosser MY-DICT.tsv > MY-ANNOTATION.conll
+> cat MY-INPUT.conll | python3 glosser.py MY-DICT.tsv > MY-ANNOTATION.conll
 
 Input files must be provided in a one-word-per-line tab-separated format (TSV, i.e., CSV with TAB separators). The first column must contain the word. following columns are copied into the output without modifications.
 Lines starting with # are treated as comments and will be copied into the output, but not modified.
@@ -52,10 +52,10 @@ The output is a one-word-per-line tab-separated format which contains a complete
 
 Note that it is possible to concatenate subsequent calls to the glosser, e.g., to provide morphological segmentation first, and then morphological glosses. For these, only the dictionary must be exchanged. Each glosser adds its own set of columns.
 
-> cat MY-INPUT.conll | java Glosser MY-DICT1.tsv | java Glosser MY-DICT2.tsv > MY-ANNOTATION.conll
+> cat MY-INPUT.conll | python3 glosser.py MY-DICT1.tsv | python3 glosser.py MY-DICT2.tsv > MY-ANNOTATION.conll
 
 For filtering the output of the glosser, we recommend using Unix command line tools such as cut. For *any* data set, the following call returns the form column together with the predicted annotation, ignoring everything else.
 
-> cat MY-INPUT.conll | cut -f 1 | java Glosser MY-DICT.tsv | cut -f 1,7 > MY-ANNOTATION.conll
+> cat MY-INPUT.conll | cut -f 1 | python3 glosser.py MY-DICT.tsv | cut -f 1,7 > MY-ANNOTATION.conll
 
 The first call to cut eliminates existing annotations other than the string itself, the second call to cut eliminates the unnecessary Glosser columns.
