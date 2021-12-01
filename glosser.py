@@ -1,10 +1,10 @@
-import sys,os,re,argparse
+import sys,os,re,argparse,random
 from copy import deepcopy
 
 # derived from Glosser.java
 # accuracy is slightly *better* (not clear why, maybe different )
 # eval inferred annotations (excl. D!) on ETCSRI test, using ETCSRI train
-#       left     right    mrg       total		
+#       left     right    mrg       total
 # java	59 (15%) 67 (17%) 110 (27%) 406	(100%)
 # py    73 (18%) 70 (17%) 112 (28%) 406 (100%)
 
@@ -51,9 +51,13 @@ args=argparse.ArgumentParser(description=
 	"\t      selection criteria: most frequent glosses/form > most frequent glosses > shortest glosses",
 	formatter_class=argparse.RawDescriptionHelpFormatter)
 args.add_argument("dicts", type=str, nargs="+", help="DICTi TSV dictionary: FORM<TAB>GLOSS[<TAB>FREQ[<TAB>...]]")
+args.add_argument("-e" ,"--eval", type=float, nargs="?", help="perform evaluation against random percentage of dictionary forms, provide a real number between 0.0 <= x < 1.0, defaults to 0 (no evaluation), if set, we don't process other input; note that this is type accuracy, token accuracy would be higher", default=0)
+args.add_argument("-g", "--gold_column", type=int, nargs="?", help="if provided, perform an evaluation against this input columns (numbering starts with 0)", default=None)
 
-	
 args=args.parse_args()
+
+if args.eval != None and args.eval>0:
+	args.gold_column=1
 
 # todo: baseline: use annotation of the *first*, the overall frequency
 # todo: eval mode: exclude full matches from left and right matches
@@ -61,6 +65,8 @@ args=args.parse_args()
 
 form2gloss2freq={}
 form2firstgloss={} # to get a baseline score
+
+eval_form2glosses={}
 
 for a in args.dicts:
 	if os.path.exists(a):
@@ -83,18 +89,36 @@ for a in args.dicts:
 								"while reading \"" + fields[2] + "\"\n")
 							sys.stderr.flush()
 
+					to_eval=False
 					if not form in form2gloss2freq:
-						form2gloss2freq[form]={}
-						form2firstgloss[form]=gloss
+						to_eval=form in eval_form2glosses or random.random()<=args.eval
 
-					if not gloss in form2gloss2freq[form]:
-						form2gloss2freq[form][gloss]=0
+					if to_eval:
+						if not form in eval_form2glosses:
+							eval_form2glosses[form]=[gloss]
+						elif not gloss in eval_form2glosses[form]:
+							eval_form2glosses[form].append(gloss)
+					else:
+						if not form in form2gloss2freq:
+							form2gloss2freq[form]={}
+							form2firstgloss[form]=gloss
 
-					form2gloss2freq[form][gloss]+=freq
+						if not gloss in form2gloss2freq[form]:
+							form2gloss2freq[form][gloss]=0
+
+						form2gloss2freq[form][gloss]+=freq
 
 
 sys.stderr.write("registered " + str(len(form2gloss2freq)) + " forms\n")
 sys.stderr.flush()
+
+if len(eval_form2glosses) == 0 and args.eval != None and args.eval > 0.0:
+	sys.stderr.write("error: no evaluation set generated, adjust your value for --eval (was "+str(args.eval)+")\n")
+	sys.exit(1)
+
+if len(form2gloss2freq) == 0:
+	sys.stderr.write("error: no training data generated, check the size of your input dictionaries and your values for --eval (was "+str(args.eval)+")\n")
+	sys.exit(2	)
 
 sys.stderr.write("optimize index\n")
 sys.stderr.flush()
@@ -147,10 +171,22 @@ for g in gloss2freq:
 		lg2gloss[lg].add(g)
 		rg2gloss[rg].add(g)
 
-sys.stderr.write("annotate first TAB-separated column from stdin\n")
-sys.stderr.flush()
+if len(eval_form2glosses)>0:
+	sys.stderr.write("evaluate against random subset of "+str(len(eval_form2glosses))+" forms\n")
+	input=[]
+	for form in eval_form2glosses:
+		for gloss in eval_form2glosses[form]:
+			input.append(form+"\t"+gloss)
+else:
+	sys.stderr.write("annotate first TAB-separated column from stdin\n")
+	input=sys.stdin
 
-for line in sys.stdin:
+scores=None
+if args.gold_column!=None:
+	scores=[{"correct" : 0, "total": 0}]*4
+
+sys.stderr.flush()
+for line in input:
 	line=line.rstrip()
 	print(line,end="")
 	if not line.startswith("#") and line.strip()!="":
@@ -158,7 +194,7 @@ for line in sys.stdin:
 		# print("<F>"+form+"</F>")
 
 		#originally, these are treesets, these do not exist in python
-		glossPrev = set([])	
+		glossPrev = set([])
 		glossLeft = set([])
 		glossRight = set([])
 		glossMrg = set([])
@@ -198,70 +234,70 @@ for line in sys.stdin:
 				while(len(left)>0 and not left in left2gloss2freq):
 					left=left[0:len(left)-1]
 				if(left in left2gloss2freq):
-					
+
 					# find most frequent glosses
 					glosses = set([]) # orig treeset
 					freq = 0
-					for gloss in left2gloss2freq[left]:  
+					for gloss in left2gloss2freq[left]:
 						if(left2gloss2freq[left][gloss] > freq):
 							glosses.clear()
 							freq = left2gloss2freq[left][gloss]
-						 
+
 						if(left2gloss2freq[left][gloss]==freq):
 							glosses.add(gloss)
-					 
-					
+
+
 					# eliminate all glosses contained in a longer one from the result set
 					for gloss in set(glosses):
 						for gl2 in set(glosses):
 							if(gl2 != gloss and gl2.startswith(gloss)):
 								if(gloss in glosses):
 									glosses.remove(gloss)
-						 
+
 
 					# return all glosses
 					glossLeft=glosses
-				 
-			
+
+
 				# find maximum right match
 				right = form.strip()
 				while(len(right)>0 and not right in right2gloss2freq):
 					#print("<R>"+right+"</R>", list(right2gloss2freq.keys())[0:10])
 					right=right[1:]
-				if(right in right2gloss2freq): 
+				if(right in right2gloss2freq):
 					#print("<R>"+right+"</R>",right2gloss2freq[right])
-					
+
 					# find most frequent glosses
 					glosses = set([])
 					freq = 0
-					for gloss in right2gloss2freq[right]:  
+					for gloss in right2gloss2freq[right]:
 						if(right2gloss2freq[right][gloss] > freq):
 							glosses.clear()
 							freq = right2gloss2freq[right][gloss]
-						 
+
 						if(right2gloss2freq[right][gloss]==freq):
 							glosses.add(gloss)
-						 
-					 
-					
+
+
+
 					# eliminate all glosses contained in a longer one from the result set
 					for gloss in set(glosses):
 						for gl2 in set(glosses):
 							if(gl2 != gloss and gl2.endswith(gloss)):
 								if(gloss in glosses):
 									glosses.remove(gloss)
-						 
+
 
 					# return all glosses in lexicographic order
 					glossRight= deepcopy(glosses)
-				 
-		
+
+
 				# merge glossLeft and glossRight, using different merging strategies
 				# originally a TreeSet
 				glossMrg = deepcopy(glossPrev)
-				
+
 				# (a) both contain the same analysis
-				if(len(glossMrg)==0):  
+				if(len(glossMrg)==0):
 					print("a",end="")
 					for l in glossLeft:
 						if(len(l.strip())>0):
@@ -269,36 +305,36 @@ for line in sys.stdin:
 								if(len(r.strip())>0):
 									if(l==r):
 										glossMrg.add(l)
-				 
-				
+
+
 				# (b) right starts with left or left ends with with right
 				# we require at least two characters to match
-				if(len(glossMrg)==0):  
+				if(len(glossMrg)==0):
 					print("b",end="")
 					for l in glossLeft:
 						if(len(l.strip())>1):
 							for r in glossRight:
 								if(len(r.strip())>1):
-									if(l.endswith(r)):  
+									if(l.endswith(r)):
 										glossMrg.add(l)
 									elif(r.startswith(l)):
 										glossMrg.add(r)
-				 
+
 
 				# (c) right contains left => right minus everthing after left
 				#     left contains right => left minus everything before right
 				# we require at least two characters to match
-				if(len(glossMrg)==0):  
+				if(len(glossMrg)==0):
 					print("c",end="")
 					for l in glossLeft:
 						if(len(l.strip())>1):
 							for r in glossRight:
 								if(len(r.strip())>1):
-									if(l in r):  
+									if(l in r):
 										glossMrg.add(r.split(l)[0]+l) # r.replaceFirst(l+".*",l)
-									elif(r in l): 
+									elif(r in l):
 										glossMrg.add(l.split(r)[0]+r) # l.replaceFirst(r+".*",r))
-				 
+
 
 				# (d) left ends with the begin of right => concatenate
 				#     left contains right => left minus everything before right
@@ -313,12 +349,12 @@ for line in sys.stdin:
 								if(len(r.strip())>overlap):
 									if(l.endswith(r[0:overlap])):
 										glossMrg.add(l+r[overlap:]) # l+r.substring(overlap))
-									 
-									while(l.endswith(r[0:overlap+1])):  
+
+									while(l.endswith(r[0:overlap+1])):
 										glossMrg.clear()
 										overlap+=1
 										glossMrg.add(l+r[overlap:])
-				
+
 				# (e) right starts with left (=> right) or left ends with with right (=> left)
 				# no length restrictions
 				if(len(glossMrg)==0):
@@ -331,15 +367,15 @@ for line in sys.stdin:
 										glossMrg.add(l)
 									elif(r.startswith(l)):
 										glossMrg.add(r)
-				 
-				
-				
+
+
+
 				# "reconstruction" using gloss index, cf.
 				# Hashtable<String,Integer> gloss2freq = new Hashtable<String,Integer>()
 				# Hashtable<String,Set<String>> lg2gloss = new Hashtable<String,Set<String>>()
 				# Hashtable<String,Set<String>> rg2gloss = new Hashtable<String,Set<String>>()
-		
-								
+
+
 				# (f) gloss(es) starting with left and ends with right
 				# frequency disambiguation below
 				if(len(glossMrg)==0):
@@ -351,12 +387,12 @@ for line in sys.stdin:
 									if(rg in rg2gloss):
 										if(g in rg2gloss[rg]):
 											glossMrg.add(g)
-				 
-				
+
+
 				# (g) gloss that starts with the beginning of left (>2) and ends with the ending of right
 				# pick the one with maximum overlap
 				# frequency disambiguation below
-				if(len(glossMrg)==0): 
+				if(len(glossMrg)==0):
 					print("g",end="")
 					overlap = 0
 					for lg in glossLeft:
@@ -368,18 +404,18 @@ for line in sys.stdin:
 										r = rg[len(rg)-j-1:]
 										if(l in lg2gloss and r in rg2gloss):
 											for  g in lg2gloss[l]:
-												if(g in rg2gloss[r]):  
+												if(g in rg2gloss[r]):
 													if(i+j>overlap):
 														overlap=i+j
 														glossMrg.clear()
-													 
+
 													if(overlap==i+j):
 														glossMrg.add(g)
-				 
+
 
 				# left *or* right match
 				# (h) all complete left or right glosses with freq > 1 (to prohibit overspecific outliers)
-				if(len(glossMrg)==0):  
+				if(len(glossMrg)==0):
 					print("h",end="")
 					for lg in glossLeft:
 						if(len(lg)>1):
@@ -389,27 +425,27 @@ for line in sys.stdin:
 						if(len(rg)>1):
 							if(rg in gloss2freq and gloss2freq[rg]>1):
 								glossMrg.add(rg)
-				
+
 				# (i) most frequent left and right fragment
 				# frequency disambiguation below, thus, just all substrings )
-				if(len(glossMrg)==0):  
+				if(len(glossMrg)==0):
 					print("i",end="")
 					for lg in glossLeft :
 						l = lg
 						while(len(l)>1):
 							if(l in gloss2freq):
-								glossMrg.add(l)						
+								glossMrg.add(l)
 							l=l[0:len(l)-1]
-						
-						
-						
+
+
+
 					for rg in glossRight:
 						r = rg
 						while(len(r)>1):
 							if(r in gloss2freq):
-								glossMrg.add(r)					
+								glossMrg.add(r)
 							r=r[1:]
-				 
+
 
 				# (j) expand most frequent gloss
 				# frequency disambiguation below, thus, just all superstrings )
@@ -423,9 +459,9 @@ for line in sys.stdin:
 						if(len(rg)>0 and rg in rg2gloss):
 							for  g in rg2gloss[rg]:
 								glossMrg.add(g)
-				 
-			 
-		
+
+
+
 			# disambiguate glossMrg with frequency
 			if(len(glossMrg)>1):
 				# sys.stderr.write(glossMrg)
@@ -433,76 +469,84 @@ for line in sys.stdin:
 				tmp = glossMrg
 				glossMrg  = set([])
 				for  g in tmp:
-					if(len(g.strip())>0):  
-						if(freq==-1):   
+					if(len(g.strip())>0):
+						if(freq==-1):
 							if(g in gloss2freq):
 								glossMrg.clear()
 								freq=gloss2freq[g]
-							 
+
 							glossMrg.add(g)
 						else:
 							if(g in gloss2freq and gloss2freq[g]>freq):
 								glossMrg.clear()
 								freq=gloss2freq[g]
-							 
+
 							if(g in gloss2freq and gloss2freq[g]==freq):
 								glossMrg.add(g)
 								# sys.stderr.write(glossMrg+" "+freq+"\n")
-							 
-						 
-					 
+
+
+
 				# sys.stderr.write("=> "+glossMrg+ " (freq: "+freq+")+\n")
 
 				# disambiguate glossMrg with brevity
-				if(len(glossMrg)>1):  
+				if(len(glossMrg)>1):
 					length = sys.maxsize
 					tmp=glossMrg
 					glossMrg  = set([])
 					for g in tmp:
-						if(len(g.strip())>0):  
+						if(len(g.strip())>0):
 							if(len(g)<length):
 								length=len(g)
 								glossMrg.clear()
-							  
+
 							if(len(g)==length):
 								glossMrg.add(g)
 								# sys.stderr.write(glossMrg+" "+length)
-							 
+
 					# sys.stderr.write("=> "+glossMrg+ " (length disamb)")
-				 
+
 				# sys.stderr.write()
-		
+
 		# originally, these were TreeSets, so they get ordered lists now
 		glossPrev = sorted(glossPrev)
 		glossLeft = sorted(glossLeft)
 		glossRight = sorted(glossRight)
-		glossMrg = sorted(glossMrg)			 
-		
-		if(len(glossPrev)==0): 
+		glossMrg = sorted(glossMrg)
+
+		if(len(glossPrev)==0):
 			glossPrev.append("_")
-		print("\t"+glossPrev.pop(),end="")
-		while(len(glossPrev)>1):
-			print("|"+glossPrev.pop(),end="")
-		 
+		print("\t"+"|".join(glossPrev),end="")
+		if scores!=None and line.split("\t")[args.gold_column] in glossPrev:
+			scores[0]["correct"]+=1
+
 		if(len(glossLeft)==0):
 			glossLeft.append("_")
-		print("\t"+glossLeft.pop(),end="")
-		while(len(glossLeft)>1):  
-			print("|"+glossLeft.pop(),end="")
-		 
+		print("\t"+"|".join(glossLeft),end="")
+		if scores!=None and line.split("\t")[args.gold_column] in glossLeft:
+			scores[1]["correct"]+=1
+
 		if(len(glossRight)==0):
 			glossRight.append("_")
-		print("\t"+glossRight.pop(),end="")
-		while(len(glossRight)>1):
-			print("|"+glossRight.pop(),end="")
-		 
+		print("\t"+"|".join(glossRight),end="")
+		if scores!=None and line.split("\t")[args.gold_column] in glossRight:
+			scores[2]["correct"]+=1
+
 		if(len(glossMrg)==0):
 			glossMrg.append("_")
-		print("\t"+glossMrg.pop(),end="")
-		while(len(glossMrg)>1):  
-			print("|"+glossMrg.pop(),end="")
-		 
-	 
+		print("\t"+"|".join(glossMrg),end="")
+		if scores!=None and line.split("\t")[args.gold_column] in glossMrg:
+			scores[3]["correct"]+=1
+
+		if scores!=None:
+			scores[0]["total"]+=1
+			scores[1]["total"]+=1
+			scores[2]["total"]+=1
+			scores[3]["total"]+=1
+		print()
+
+if scores!=None:
 	print()
- 
- 
+	for s in scores:
+		print(str(s["correct"]/float(s["total"]))[0:6],end="\t")
+print()

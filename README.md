@@ -20,7 +20,7 @@ Sample call:
 Input files must be provided in a one-word-per-line tab-separated format (TSV, i.e., CSV with TAB separators). The first column must contain the word. following columns are copied into the output without modifications.
 Lines starting with # are treated as comments and will be copied into the output, but not modified.
 
-The dictionary must be provided in a one-word-per-line tab-separated format. The first column must contain the word, the second must contain the gloss, the third (optional) column can contain frequencies. If no frequency is provided, we assume frequency=1. Following columns will be ignored. It is possible to provide several dictionaries, if the same word occurs multiple times, its frequencies are added. 
+The dictionary must be provided in a one-word-per-line tab-separated format. The first column must contain the word, the second must contain the gloss, the third (optional) column can contain frequencies. If no frequency is provided, we assume frequency=1. Following columns will be ignored. It is possible to provide several dictionaries, if the same word occurs multiple times, its frequencies are added.
 
 The output is a one-word-per-line tab-separated format which contains a complete copy of the input, with several columns added:
 - BASE baseline (the first annotation found in the dictionary, _ if no match is found)
@@ -59,3 +59,9 @@ For filtering the output of the glosser, we recommend using Unix command line to
 > cat MY-INPUT.conll | cut -f 1 | python3 glosser.py MY-DICT.tsv | cut -f 1,7 > MY-ANNOTATION.conll
 
 The first call to cut eliminates existing annotations other than the string itself, the second call to cut eliminates the unnecessary Glosser columns.
+
+Aside from the production mode, we also provide an evaluation mode. Then, it doesn't read from stdin, it sets a fraction (here 10%) of the training data apart and aims to predict these analyses by Glosser inference:
+
+> python3 glosser.py dict.tsv -e 0.1
+
+Note that this evaluates type accuracy, token accuracy would be higher. Also not that we consider only full matches as true positives. This is primarily meant to select the best prediction heuristic. For real evaluation, annotate data and perform evaluation on that.
