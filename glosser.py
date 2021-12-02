@@ -183,7 +183,7 @@ else:
 
 scores=None
 if args.gold_column!=None:
-	scores=[{"correct" : 0, "total": 0}]*4
+	scores=[{"correct" : 0, "total": 0},{"correct" : 0, "total": 0},{"correct" : 0, "total": 0},{"correct" : 0, "total": 0}]
 
 sys.stderr.flush()
 for line in input:
