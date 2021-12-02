@@ -1,5 +1,6 @@
 import sys,os,re,argparse,random
 from copy import deepcopy
+import Levenshtein
 
 # derived from Glosser.java
 # accuracy is slightly *better* (not clear why, maybe different )
@@ -53,8 +54,13 @@ args=argparse.ArgumentParser(description=
 args.add_argument("dicts", type=str, nargs="+", help="DICTi TSV dictionary: FORM<TAB>GLOSS[<TAB>FREQ[<TAB>...]]")
 args.add_argument("-e" ,"--eval", type=float, nargs="?", help="perform evaluation against random percentage of dictionary forms, provide a real number between 0.0 <= x < 1.0, defaults to 0 (no evaluation), if set, we don't process other input; note that this is type accuracy, token accuracy would be higher", default=0)
 args.add_argument("-g", "--gold_column", type=int, nargs="?", help="if provided, perform an evaluation against this input columns (numbering starts with 0)", default=None)
+args.add_argument("-lev","--post_edit", action="store_true", help="instead of the bottom-up predicted annotation (sequence of tags, gloss), return the Levenshtein-closest observed annotation for an unknown word; if multiple, return the most frequent. Note that this guarantees valid output, but for *large* and/or *open* schemas (e.g., in IGT annotation), this can decrease performance")
+args.add_argument("-det", "--deterministic", action="store_true", help="if set, perform random sampling against a static seed, yields reproducible results (on the same installation)")
 
 args=args.parse_args()
+
+if args.deterministic:
+	random.seed(0)
 
 if args.eval != None and args.eval>0:
 	args.gold_column=1
@@ -124,6 +130,17 @@ sys.stderr.write("optimize index\n")
 sys.stderr.flush()
 
 ## fix indixes
+
+gloss2freq={}
+cached_gloss2fix={}
+if args.post_edit:
+	# we return levenshtein-closest observed tag, but if equal, the more frequent one
+	for form in form2gloss2freq:
+		for gloss,freq in form2gloss2freq[form].items():
+			if not gloss in gloss2freq:
+				gloss2freq[gloss]=freq
+			else:
+				gloss2freq[gloss]+=freq
 
 # form-gloss index for partial matches
 left2gloss2freq={}
@@ -516,33 +533,51 @@ for line in input:
 
 		if(len(glossPrev)==0):
 			glossPrev.append("_")
-		print("\t"+"|".join(glossPrev),end="")
-		if scores!=None and line.split("\t")[args.gold_column] in glossPrev:
-			scores[0]["correct"]+=1
+		glossPrev="|".join(glossPrev)
 
 		if(len(glossLeft)==0):
 			glossLeft.append("_")
-		print("\t"+"|".join(glossLeft),end="")
-		if scores!=None and line.split("\t")[args.gold_column] in glossLeft:
-			scores[1]["correct"]+=1
+		glossLeft="|".join(glossLeft)
 
 		if(len(glossRight)==0):
 			glossRight.append("_")
-		print("\t"+"|".join(glossRight),end="")
-		if scores!=None and line.split("\t")[args.gold_column] in glossRight:
-			scores[2]["correct"]+=1
+		glossRight="|".join(glossRight)
 
 		if(len(glossMrg)==0):
 			glossMrg.append("_")
-		print("\t"+"|".join(glossMrg),end="")
-		if scores!=None and line.split("\t")[args.gold_column] in glossMrg:
-			scores[3]["correct"]+=1
+		glossMrg="|".join(glossMrg)
 
+		glosses=[glossPrev, glossLeft, glossRight, glossMrg]
+
+		# note that in post-editing, we normally predict a single gloss
+		if args.post_edit:
+			for x,gloss in enumerate(glosses):
+				if not gloss in gloss2freq and gloss!="_":
+					if not gloss in cached_gloss2fix:
+						cand="_"
+						freq=0
+						lev=None
+						for mygloss,myfreq in gloss2freq.items():
+							mylev=Levenshtein.ratio(gloss,mygloss)
+							if lev==None or mylev<lev or (mylev==lev and myfreq>freq):
+								cand=mygloss
+								freq=myfreq
+							elif mylev==lev and myfreq==freq and mygloss!=cand:
+								cand=cand+"|"+mygloss
+						cand="|".join(sorted(set(cand.split("|"))))
+						cached_gloss2fix[gloss]=cand
+
+					glosses[x]=cached_gloss2fix[gloss]
+
+		# write results
+		print("\t"+"\t".join(glosses))
 		if scores!=None:
-			scores[0]["total"]+=1
-			scores[1]["total"]+=1
-			scores[2]["total"]+=1
-			scores[3]["total"]+=1
+			gold=line.split("\t")[args.gold_column]
+			for x,gloss in enumerate(glosses):
+				# gold among predicted
+				if gold in gloss:
+					scores[x]["correct"]+=1
+				scores[x]["total"]+=1
 		print()
 
 if scores!=None:
